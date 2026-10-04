@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.manateelazycat.wave",
+  "name": "Omarchy Wave",
+  "version": "0.1.0",
+  "author": "ManateeLazyCat",
+  "license": "GPL-3.0-only",
+  "description": "Theme-colored music waves along the bottom of empty workspaces, reacting to system audio from any app.",
+  "kinds": ["service"],
+  "entryPoints": {"service": "Service.qml"}
+}
