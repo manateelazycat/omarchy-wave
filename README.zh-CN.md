@@ -19,6 +19,14 @@ https://github.com/user-attachments/assets/5a807081-1bbd-4bc5-9d78-faf9676b68cd
 
 需要支持服务插件的 Omarchy（Quickshell）环境、Hyprland、Python 3，以及提供 `pactl` 和 `parec` 的 `libpulse`。
 
+通过 Omarchy 插件管理器安装并启用：
+
+```sh
+omarchy plugin add https://github.com/manateelazycat/omarchy-wave --enable
+```
+
+也可以使用项目自带的安装器：
+
 ```sh
 git clone https://github.com/manateelazycat/omarchy-wave.git
 cd omarchy-wave
@@ -56,6 +64,15 @@ omarchy plugin enable io.github.manateelazycat.wave
 ```
 
 状态包含各屏幕的空白判断、正在采集的输出设备、音频是否活跃、当前主题颜色和后端错误。没有音频播放或没有空白工作区时不显示波浪。
+
+## 卸载
+
+```sh
+omarchy plugin disable io.github.manateelazycat.wave
+omarchy plugin remove io.github.manateelazycat.wave
+```
+
+Omarchy 会删除通过 Git 管理的安装目录（包括 `settings.json`），通过项目自带安装器安装的目录则会先备份再移除。安装器自身创建的备份会保留在 `~/.local/state/omarchy-wave/backups/`。
 
 ## 开发
 

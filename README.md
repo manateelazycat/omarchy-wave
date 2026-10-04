@@ -19,6 +19,14 @@ Music-reactive waves along the bottom of empty Omarchy workspaces, with colors t
 
 Requires Omarchy with Quickshell and service plugin support, Hyprland, Python 3, and `libpulse` for `pactl` and `parec`.
 
+Install and enable with Omarchy's plugin manager:
+
+```sh
+omarchy plugin add https://github.com/manateelazycat/omarchy-wave --enable
+```
+
+Alternatively, use the bundled installer:
+
 ```sh
 git clone https://github.com/manateelazycat/omarchy-wave.git
 cd omarchy-wave
@@ -56,6 +64,15 @@ omarchy plugin enable io.github.manateelazycat.wave
 ```
 
 Status reports each screen's empty-workspace state, captured audio outputs, audio activity, theme color and backend errors. Waves remain hidden when no audio is playing or no workspace is empty.
+
+## Uninstall
+
+```sh
+omarchy plugin disable io.github.manateelazycat.wave
+omarchy plugin remove io.github.manateelazycat.wave
+```
+
+Omarchy deletes Git-managed installations, including `settings.json`, and backs up folders installed by the bundled installer before removing them. The installer's own backups remain in `~/.local/state/omarchy-wave/backups/`.
 
 ## Development
 
