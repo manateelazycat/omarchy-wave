@@ -25,6 +25,7 @@ BAND_COUNT = 24
 FRAME_BYTES = FFT_SIZE * 2 * 4
 NOISE_FLOOR = 0.0008
 FRAME_INTERVAL = 1 / 30
+HEARTBEAT_INTERVAL = 1.0
 
 
 def command_json(command: list[str]):
@@ -87,7 +88,7 @@ class Spectrum:
         self.weights = [(math.sqrt(lo * hi) / 160) ** 0.28 for lo, hi in zip(edges, edges[1:])]
         self.reference = 0.008
 
-    def fft(self, samples: list[float]) -> list[complex]:
+    def fft(self, samples: list[complex]) -> list[complex]:
         mean = sum(samples) / FFT_SIZE
         data = [complex((samples[i] - mean) * self.window[i]) for i in self.order]
         for size, twiddles in self.twiddles.items():
@@ -109,14 +110,15 @@ class Spectrum:
             values.byteswap()
         if any(not math.isfinite(v) for v in values):
             return [0.0] * BAND_COUNT, 0.0
-        left, right = list(values[::2]), list(values[1::2])
         rms = math.sqrt(sum(v * v for v in values) / len(values))
         if rms < NOISE_FLOOR:
             self.reference = max(0.008, self.reference * 0.99)
             return [0.0] * BAND_COUNT, 0.0
-        # Analyze stereo separately so out-of-phase material cannot cancel.
-        spectra = [self.fft(left), self.fft(right)]
-        power = [(abs(spectra[0][i]) ** 2 + abs(spectra[1][i]) ** 2) / 2 for i in range(FFT_SIZE // 2)]
+        # Pack left + j*right into one FFT. Mirrored bins recover the average
+        # channel power without cancelling out-of-phase stereo material.
+        spectrum = self.fft([complex(values[i], values[i + 1]) for i in range(0, len(values), 2)])
+        power = [(abs(spectrum[i]) ** 2 + abs(spectrum[-i]) ** 2) / 4
+                 for i in range(FFT_SIZE // 2)]
         magnitudes = [
             math.sqrt(sum(power[i] for i in indexes) / len(indexes)) * 4 / FFT_SIZE * weight
             for indexes, weight in zip(self.ranges, self.weights)
@@ -189,12 +191,16 @@ class Backend:
         self.desktop_due = 0.0
         self.audio_due = 0.0
         self.next_emit = 0.0
+        self.last_sample = -FRAME_INTERVAL
+        self.last_packet = None
+        self.heartbeat_due = 0.0
         self.connect_due = 0.0
 
     def drop_capture(self, name: str):
         capture = self.captures.pop(name)
         self.selector.unregister(capture.process.stdout)
         capture.stop()
+        self.next_emit = 0.0
 
     def refresh_desktop(self):
         previous = self.screens
@@ -274,6 +280,10 @@ class Backend:
             if not alive:
                 self.drop_capture(name)
                 self.audio_due = time.monotonic() + 1
+            else:
+                # New PCM wakes idle analysis, while bursts remain capped at 30 Hz.
+                due = max(self.last_sample + FRAME_INTERVAL, time.monotonic())
+                self.next_emit = min(self.next_emit, due)
             return
         try:
             data = key.fileobj.recv(65536) if kind == "hypr" else os.read(key.fd, 65536)
@@ -315,8 +325,12 @@ class Backend:
         packet = {"screens": self.screens, "sinks": list(self.captures), "active": level > 0,
                   "level": round(level, 4), "bands": [round(v, 4) for v in bands],
                   "error": "; ".join(self.errors.values())}
-        print(json.dumps(packet, separators=(",", ":")), flush=True)
-        self.next_emit = now + (FRAME_INTERVAL if level else 0.2)
+        if packet != self.last_packet or now >= self.heartbeat_due:
+            print(json.dumps(packet, separators=(",", ":")), flush=True)
+            self.last_packet = packet
+            self.heartbeat_due = now + HEARTBEAT_INTERVAL
+        self.last_sample = now
+        self.next_emit = now + (FRAME_INTERVAL if level else HEARTBEAT_INTERVAL)
 
     def run(self):
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -330,6 +344,7 @@ class Backend:
                     self.refresh_desktop()
                 if now >= self.audio_due:
                     self.refresh_audio()
+                now = time.monotonic()
                 if now >= self.next_emit:
                     self.emit(now)
                 due = min(self.desktop_due, self.audio_due, self.next_emit, self.connect_due)

@@ -33,7 +33,7 @@ PanelWindow {
     window: panel
   }
 
-  onFrameChanged: wave.requestPaint()
+  onFrameChanged: if (visible) wave.requestPaint()
   onWaveColorChanged: wave.requestPaint()
   onWaveOpacityChanged: wave.requestPaint()
   onVisibleChanged: if (visible) wave.requestPaint()

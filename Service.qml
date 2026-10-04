@@ -100,12 +100,19 @@ Item {
 
   FrameAnimation {
     property real elapsed: 0
+    property real sinceUpdate: 0
     running: root.animating
+    onRunningChanged: {
+      elapsed = 0
+      sinceUpdate = 0
+    }
     onTriggered: {
       elapsed += frameTime
+      sinceUpdate += frameTime
       if (elapsed < 1 / 30) return
-      var dt = Math.min(elapsed, 0.1)
-      elapsed = 0
+      var dt = Math.min(sinceUpdate, 0.1)
+      elapsed %= 1 / 30
+      sinceUpdate = 0
       var attack = 1 - Math.exp(-dt / 0.065)
       var release = 1 - Math.exp(-dt / 0.22)
       root.level += (root.targetLevel - root.level) * (root.targetLevel > root.level ? attack : release)

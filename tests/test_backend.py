@@ -2,10 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import array
+import contextlib
+import io
+import json
 import math
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
-from wave_backend import BAND_COUNT, FFT_SIZE, RATE, Spectrum, empty_screens
+from wave_backend import BAND_COUNT, FFT_SIZE, FRAME_INTERVAL, RATE, Backend, Spectrum, empty_screens
 
 
 def pcm(frequency=440, amplitude=0.1, antiphase=False):
@@ -51,11 +56,99 @@ class SpectrumTests(unittest.TestCase):
     def test_stereo_antiphase_does_not_cancel(self):
         regular = Spectrum().analyze(pcm())
         antiphase = Spectrum().analyze(pcm(antiphase=True))
-        self.assertEqual(regular, antiphase)
+        self.assertAlmostEqual(regular[1], antiphase[1], places=12)
+        for a, b in zip(regular[0], antiphase[0]):
+            self.assertAlmostEqual(a, b, places=12)
+
+    def test_swapping_distinct_channels_preserves_spectrum(self):
+        values = array.array("f")
+        swapped = array.array("f")
+        for i in range(FFT_SIZE):
+            left = 0.1 * math.sin(2 * math.pi * 90 * i / RATE) + 0.03
+            right = 0.07 * math.cos(2 * math.pi * 3500 * i / RATE) - 0.02
+            values.extend((left, right))
+            swapped.extend((right, left))
+        regular = Spectrum().analyze(values.tobytes())
+        reversed_channels = Spectrum().analyze(swapped.tobytes())
+        self.assertAlmostEqual(regular[1], reversed_channels[1], places=12)
+        for a, b in zip(regular[0], reversed_channels[0]):
+            self.assertAlmostEqual(a, b, places=12)
+        self.assertGreater(max(regular[0][:8]), 0.1)
+        self.assertGreater(max(regular[0][-5:]), 0.1)
+
+    def test_single_channel_audio_remains_active(self):
+        original = array.array("f")
+        original.frombytes(pcm())
+        for channel in (0, 1):
+            values = array.array("f", original)
+            values[1 - channel::2] = array.array("f", [0.0] * FFT_SIZE)
+            bands, level = Spectrum().analyze(values.tobytes())
+            self.assertGreater(level, 0.1)
+            self.assertGreater(max(bands), 0.1)
 
     def test_nonfinite_input_is_discarded(self):
         data = array.array("f", [float("nan")] * FFT_SIZE * 2).tobytes()
         self.assertEqual(Spectrum().analyze(data)[1], 0)
+
+
+class SchedulingTests(unittest.TestCase):
+    def setUp(self):
+        self.backend = Backend()
+        self.addCleanup(self.backend.selector.close)
+        self.backend.screens = {"DP-1": True}
+        self.capture = Mock()
+        self.capture.read.return_value = True
+        self.capture.analyze.return_value = ([0.0] * BAND_COUNT, 0.0)
+        self.backend.captures = {"output": self.capture}
+        self.key = SimpleNamespace(data=("pcm", "output"))
+
+    def test_new_pcm_wakes_idle_analysis_within_one_frame(self):
+        self.backend.last_sample = 10.0
+        self.backend.next_emit = 11.0
+        with patch("wave_backend.time.monotonic", return_value=10.01):
+            self.backend.read_event(self.key)
+        self.assertLessEqual(self.backend.next_emit - 10.01, FRAME_INTERVAL)
+        self.assertGreaterEqual(self.backend.next_emit, 10.0 + FRAME_INTERVAL)
+
+    def test_pcm_bursts_do_not_exceed_analysis_frame_rate(self):
+        self.backend.last_sample = 10.0
+        self.backend.next_emit = 11.0
+        with patch("wave_backend.time.monotonic", return_value=10.001):
+            for _ in range(20):
+                self.backend.read_event(self.key)
+        self.assertAlmostEqual(self.backend.next_emit, 10.0 + FRAME_INTERVAL)
+        self.capture.analyze.assert_not_called()
+
+    def test_unchanged_silence_only_emits_one_heartbeat_per_second(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for now in (10.0, 10.04, 10.1, 10.99, 11.0):
+                self.backend.emit(now)
+        packets = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(len(packets), 2)
+        self.assertTrue(all(not packet["active"] for packet in packets))
+
+    def test_audio_onset_and_stop_are_reported_without_waiting_for_heartbeat(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.backend.emit(10.0)
+            self.capture.analyze.return_value = ([0.5] * BAND_COUNT, 0.5)
+            self.backend.emit(10.04)
+            self.capture.analyze.return_value = ([0.0] * BAND_COUNT, 0.0)
+            self.backend.emit(10.08)
+        packets = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([packet["active"] for packet in packets], [False, True, False])
+
+    def test_workspace_changes_are_reported_during_silence(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.backend.emit(10.0)
+            self.backend.screens = {"DP-1": False}
+            self.backend.emit(10.01)
+        packets = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(len(packets), 2)
+        self.assertFalse(packets[-1]["screens"]["DP-1"])
+        self.assertEqual(self.capture.analyze.call_count, 1)
 
 
 class WorkspaceTests(unittest.TestCase):
