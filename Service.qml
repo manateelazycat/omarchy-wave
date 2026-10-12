@@ -4,8 +4,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import qs.Commons
-
+import qs.Commons as Commons
 Item {
   id: root
 
@@ -138,7 +137,7 @@ Item {
       eligible: root.emptyScreens[modelData.name] === true
       waveHeight: root.waveHeight
       waveOpacity: root.waveOpacity
-      waveColor: Color.accent
+      waveColor: Commons.Color.accent
       audioLevel: root.level
       bands: root.bands
       phase: root.phase
@@ -154,7 +153,7 @@ Item {
         level: root.level,
         screens: root.emptyScreens,
         sinks: root.sinks,
-        color: String(Color.accent),
+        color: String(Commons.Color.accent),
         height: root.waveHeight,
         opacity: root.waveOpacity,
         sensitivity: root.sensitivity,
